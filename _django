@@ -1,24 +1,109 @@
 #compdef _django django
 
-function _django {
-  local manage cache_file now
-  local -a commands
-  
-  manage=$(_dj_findmanage) || return 1
-  
-  # Use project path as cache key
-  local project_root="${manage%/manage.py}"
-  cache_file="/tmp/django_completion_${project_root//\//_}"
-  
-  # Check if cache exists and is fresh (10 min)
-  now=$(date +%s)
-  if [[ -f "$cache_file" ]] && (( now - $(stat -f%m "$cache_file") < 600 )); then
-    commands=( $(<"$cache_file") )
+_dj_completion_python() {
+  if (( ${+commands[uv]} )); then
+    uv run python "$@"
+  elif (( ${+commands[python3]} )); then
+    python3 "$@"
   else
-    # Refresh cache
-    commands=( $(uv run python "$manage" help --commands 2>/dev/null) )
-    print -l $commands > "$cache_file"
+    python "$@"
   fi
-  
-  compadd -- $commands
+}
+
+_dj_builtin_commands() {
+  print -l \
+    check \
+    changepassword \
+    clearsessions \
+    collectstatic \
+    compilemessages \
+    createcachetable \
+    dbshell \
+    diffsettings \
+    dumpdata \
+    flush \
+    help \
+    inspectdb \
+    loaddata \
+    makemessages \
+    makemigrations \
+    migrate \
+    optimizemigration \
+    runserver \
+    sendtestemail \
+    shell \
+    showmigrations \
+    sqlflush \
+    sqlmigrate \
+    sqlsequencereset \
+    squashmigrations \
+    startapp \
+    startproject \
+    test \
+    testserver
+}
+
+_dj_discover_commands() {
+  local manage="$1" line output
+  local -aU discovered
+
+  output="$(_dj_completion_python "$manage" help --commands 2>/dev/null)" || return 1
+
+  for line in "${(@f)output}"; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+
+    [[ -z "$line" ]] && continue
+    [[ "$line" == "Available subcommands:" ]] && continue
+    [[ "$line" == \[*\] ]] && continue
+    [[ "$line" == *[[:space:]]* ]] && continue
+    [[ "$line" == *[^[:alnum:]_]* ]] && continue
+
+    discovered+=("$line")
+  done
+
+  (( ${#discovered[@]} > 0 )) || return 1
+  print -l -- "${discovered[@]}"
+}
+
+function _django {
+  local manage cache_file now mtime cache_ttl
+  local project_root
+  local -a commands fresh_commands
+
+  cache_ttl=600
+
+  if manage=$(_dj_findmanage); then
+    project_root="${manage%/manage.py}"
+    cache_file="/tmp/django_completion_${project_root//\//_}"
+
+    if [[ -f "$cache_file" ]]; then
+      if mtime=$(stat -f%m "$cache_file" 2>/dev/null); then
+        :
+      elif mtime=$(stat -c%Y "$cache_file" 2>/dev/null); then
+        :
+      else
+        mtime=0
+      fi
+
+      now=$(date +%s)
+      if (( now - mtime < cache_ttl )); then
+        commands=("${(@f)$(<"$cache_file")}")
+      fi
+    fi
+
+    if (( ${#commands[@]} == 0 )); then
+      fresh_commands=("${(@f)$(_dj_discover_commands "$manage")}")
+      if (( ${#fresh_commands[@]} > 0 )); then
+        commands=("${fresh_commands[@]}")
+        print -l -- "${commands[@]}" >| "$cache_file"
+      fi
+    fi
+  fi
+
+  if (( ${#commands[@]} == 0 )); then
+    commands=("${(@f)$(_dj_builtin_commands)}")
+  fi
+
+  compadd -- "${commands[@]}"
 }
