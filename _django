@@ -1,4 +1,4 @@
-#compdef _django django
+#compdef django
 
 _dj_completion_python() {
   if (( ${+commands[uv]} )); then
@@ -8,6 +8,25 @@ _dj_completion_python() {
   else
     python "$@"
   fi
+}
+
+_dj_locate_manage() {
+  local test_path="${PWD}"
+
+  while [[ "$test_path" != "/" ]]; do
+    if [[ -f "${test_path}/manage.py" ]]; then
+      printf '%s' "${test_path}/manage.py"
+      return 0
+    fi
+    test_path="${test_path:a:h}"
+  done
+
+  if [[ -f "${test_path}/manage.py" ]]; then
+    printf '%s' "${test_path}/manage.py"
+    return 0
+  fi
+
+  return 1
 }
 
 _dj_file_mtime() {
@@ -20,6 +39,18 @@ _dj_file_mtime() {
     return 0
   fi
   return 1
+}
+
+_dj_read_cache_lines() {
+  local cache_file="$1" line
+
+  [[ -f "$cache_file" ]] || return 1
+
+  while IFS= read -r line; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -n "$line" ]] && printf '%s\n' "$line"
+  done < "$cache_file"
 }
 
 _dj_builtin_commands() {
@@ -106,6 +137,18 @@ _dj_builtin_command_options() {
   print -l -- "${options[@]}"
 }
 
+_dj_option_takes_value() {
+  local option="$1"
+
+  case "$option" in
+    --settings|--pythonpath|--verbosity|--database|--app|--exclude|--format|--output|--indent|--pks|--interface|--command|--parallel|--pattern|--tag|--exclude-tag|--testrunner|--top-level-directory|--template|--extension|--name|-c|-k)
+      return 0
+      ;;
+  esac
+
+  return 1
+}
+
 _dj_discover_commands() {
   local manage="$1" line output
   local -aU discovered
@@ -164,6 +207,65 @@ _dj_discover_command_options() {
   print -l -- "${discovered[@]}"
 }
 
+_dj_discover_database_aliases() {
+  local manage="$1" line output
+  local -aU aliases
+
+  output="$(_dj_completion_python "$manage" shell -c "from django.conf import settings; import sys; sys.stdout.write(\"\\n\".join(settings.DATABASES.keys()))" 2>/dev/null)" || return 1
+
+  for line in "${(@f)output}"; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" == *[^[:alnum:]_]* ]] && continue
+    aliases+=("$line")
+  done
+
+  (( ${#aliases[@]} > 0 )) || return 1
+  print -l -- "${aliases[@]}"
+}
+
+_dj_discover_app_labels() {
+  local manage="$1" line output
+  local -aU app_labels
+
+  output="$(_dj_completion_python "$manage" shell -c "from django.apps import apps; import sys; sys.stdout.write(\"\\n\".join(sorted(config.label for config in apps.get_app_configs())))" 2>/dev/null)" || return 1
+
+  for line in "${(@f)output}"; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+    [[ -z "$line" ]] && continue
+    [[ "$line" == *[^[:alnum:]_]* ]] && continue
+    app_labels+=("$line")
+  done
+
+  (( ${#app_labels[@]} > 0 )) || return 1
+  print -l -- "${app_labels[@]}"
+}
+
+_dj_discover_migrations_for_app() {
+  local manage="$1" app_label="$2" line output
+  local -aU migrations
+
+  [[ -z "$app_label" ]] && return 1
+
+  output="$(_dj_completion_python "$manage" showmigrations "$app_label" --list 2>/dev/null)" || return 1
+
+  for line in "${(@f)output}"; do
+    line="${line#"${line%%[![:space:]]*}"}"
+    line="${line%"${line##*[![:space:]]}"}"
+
+    [[ -z "$line" ]] && continue
+    line="${line#*] }"
+    [[ "$line" == [0-9][0-9][0-9][0-9]_* ]] || continue
+
+    migrations+=("$line")
+  done
+
+  (( ${#migrations[@]} > 0 )) || return 1
+  print -l -- "${migrations[@]}"
+}
+
 _dj_get_commands() {
   local manage="$1" project_root="$2"
   local cache_file now mtime cache_ttl
@@ -176,13 +278,13 @@ _dj_get_commands() {
     if mtime=$(_dj_file_mtime "$cache_file"); then
       now=$(date +%s)
       if (( now - mtime < cache_ttl )); then
-        commands=("${(@f)$(<"$cache_file")}")
+        commands=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
       fi
     fi
   fi
 
   if [[ -n "$manage" && ${#commands[@]} -eq 0 ]]; then
-    fresh_commands=("${(@f)$(_dj_discover_commands "$manage")}")
+    fresh_commands=(${(f)"$(_dj_discover_commands "$manage")"})
     if (( ${#fresh_commands[@]} > 0 )); then
       commands=("${fresh_commands[@]}")
       print -l -- "${commands[@]}" >| "$cache_file"
@@ -190,7 +292,7 @@ _dj_get_commands() {
   fi
 
   if (( ${#commands[@]} == 0 )); then
-    commands=("${(@f)$(_dj_builtin_commands)}")
+    commands=(${(f)"$(_dj_builtin_commands)"})
   fi
 
   print -l -- "${commands[@]}"
@@ -211,14 +313,14 @@ _dj_get_command_options() {
       if mtime=$(_dj_file_mtime "$cache_file"); then
         now=$(date +%s)
         if (( now - mtime < cache_ttl )); then
-          options=("${(@f)$(<"$cache_file")}")
+          options=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
         fi
       fi
     fi
   fi
 
   if [[ -n "$manage" && ${#options[@]} -eq 0 ]]; then
-    fresh_options=("${(@f)$(_dj_discover_command_options "$manage" "$command")}")
+    fresh_options=(${(f)"$(_dj_discover_command_options "$manage" "$command")"})
     if (( ${#fresh_options[@]} > 0 )); then
       options=("${fresh_options[@]}")
       if [[ -n "$cache_file" ]]; then
@@ -228,29 +330,277 @@ _dj_get_command_options() {
   fi
 
   if (( ${#options[@]} == 0 )); then
-    options=("${(@f)$(_dj_builtin_command_options "$command")}")
+    options=(${(f)"$(_dj_builtin_command_options "$command")"})
   fi
 
   print -l -- "${options[@]}"
 }
 
+_dj_get_database_aliases() {
+  local manage="$1" project_root="$2"
+  local cache_file now mtime cache_ttl
+  local -a aliases fresh_aliases
+
+  cache_ttl=600
+
+  if [[ -n "$project_root" ]]; then
+    cache_file="/tmp/django_completion_vals_${project_root//\//_}_database_aliases"
+  fi
+
+  if [[ -n "$manage" && -n "$cache_file" && -f "$cache_file" ]]; then
+    if mtime=$(_dj_file_mtime "$cache_file"); then
+      now=$(date +%s)
+      if (( now - mtime < cache_ttl )); then
+        aliases=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
+      fi
+    fi
+  fi
+
+  if [[ -n "$manage" && ${#aliases[@]} -eq 0 ]]; then
+    fresh_aliases=(${(f)"$(_dj_discover_database_aliases "$manage")"})
+    if (( ${#fresh_aliases[@]} > 0 )); then
+      aliases=("${fresh_aliases[@]}")
+      if [[ -n "$cache_file" ]]; then
+        print -l -- "${aliases[@]}" >| "$cache_file"
+      fi
+    fi
+  fi
+
+  if (( ${#aliases[@]} == 0 )); then
+    aliases=(default)
+  fi
+
+  print -l -- "${aliases[@]}"
+}
+
+_dj_get_app_labels() {
+  local manage="$1" project_root="$2"
+  local cache_file now mtime cache_ttl
+  local -a app_labels fresh_app_labels
+
+  cache_ttl=600
+
+  if [[ -n "$project_root" ]]; then
+    cache_file="/tmp/django_completion_vals_${project_root//\//_}_app_labels"
+  fi
+
+  if [[ -n "$manage" && -n "$cache_file" && -f "$cache_file" ]]; then
+    if mtime=$(_dj_file_mtime "$cache_file"); then
+      now=$(date +%s)
+      if (( now - mtime < cache_ttl )); then
+        app_labels=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
+      fi
+    fi
+  fi
+
+  if [[ -n "$manage" && ${#app_labels[@]} -eq 0 ]]; then
+    fresh_app_labels=(${(f)"$(_dj_discover_app_labels "$manage")"})
+    if (( ${#fresh_app_labels[@]} > 0 )); then
+      app_labels=("${fresh_app_labels[@]}")
+      if [[ -n "$cache_file" ]]; then
+        print -l -- "${app_labels[@]}" >| "$cache_file"
+      fi
+    fi
+  fi
+
+  print -l -- "${app_labels[@]}"
+}
+
+_dj_get_migrations_for_app() {
+  local manage="$1" project_root="$2" app_label="$3"
+  local cache_file now mtime cache_ttl app_key
+  local -a migrations fresh_migrations
+
+  cache_ttl=600
+
+  if [[ -n "$project_root" && -n "$app_label" ]]; then
+    app_key="${app_label//[^A-Za-z0-9_]/_}"
+    cache_file="/tmp/django_completion_vals_${project_root//\//_}_migrations_${app_key}"
+  fi
+
+  if [[ -n "$manage" && -n "$cache_file" && -f "$cache_file" ]]; then
+    if mtime=$(_dj_file_mtime "$cache_file"); then
+      now=$(date +%s)
+      if (( now - mtime < cache_ttl )); then
+        migrations=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
+      fi
+    fi
+  fi
+
+  if [[ -n "$manage" && -n "$app_label" && ${#migrations[@]} -eq 0 ]]; then
+    fresh_migrations=(${(f)"$(_dj_discover_migrations_for_app "$manage" "$app_label")"})
+    if (( ${#fresh_migrations[@]} > 0 )); then
+      migrations=("${fresh_migrations[@]}")
+      if [[ -n "$cache_file" ]]; then
+        print -l -- "${migrations[@]}" >| "$cache_file"
+      fi
+    fi
+  fi
+
+  print -l -- "${migrations[@]}"
+}
+
+_dj_complete_option_value() {
+  local manage="$1" project_root="$2" command="$3" option="$4"
+  local -a values
+
+  case "$option" in
+    --database)
+      values=(${(f)"$(_dj_get_database_aliases "$manage" "$project_root")"})
+      (( ${#values[@]} > 0 )) && compadd -- "${values[@]}"
+      return 0
+      ;;
+    --app|--exclude)
+      values=(${(f)"$(_dj_get_app_labels "$manage" "$project_root")"})
+      (( ${#values[@]} > 0 )) && compadd -- "${values[@]}"
+      return 0
+      ;;
+    --verbosity)
+      compadd -- 0 1 2 3
+      return 0
+      ;;
+    --format)
+      compadd -- json jsonl yaml yml xml
+      return 0
+      ;;
+    --interface)
+      compadd -- ipython bpython python
+      return 0
+      ;;
+    --parallel)
+      compadd -- auto 1 2 4 8
+      return 0
+      ;;
+    --settings)
+      _files -g '*.py'
+      return 0
+      ;;
+    --pythonpath|--top-level-directory)
+      _directories
+      return 0
+      ;;
+    --output|--template)
+      _files
+      return 0
+      ;;
+    --name|--tag|--exclude-tag|--pattern|--command|-c|-k)
+      return 1
+      ;;
+  esac
+
+  return 1
+}
+
+_dj_complete_positional() {
+  local manage="$1" project_root="$2" command="$3"
+  local index word current_position app_label
+  local -a positional app_labels migrations
+  local skip_next=0
+
+  for (( index=3; index<CURRENT; index++ )); do
+    word="${words[index]}"
+
+    if (( skip_next )); then
+      skip_next=0
+      continue
+    fi
+
+    if [[ "$word" == --*=* ]]; then
+      continue
+    fi
+
+    if _dj_option_takes_value "$word"; then
+      skip_next=1
+      continue
+    fi
+
+    [[ "$word" == -* ]] && continue
+    positional+=("$word")
+  done
+
+  current_position=$(( ${#positional[@]} + 1 ))
+
+  case "$command" in
+    migrate|makemigrations|showmigrations|sqlsequencereset|dumpdata|test)
+      app_labels=(${(f)"$(_dj_get_app_labels "$manage" "$project_root")"})
+      (( ${#app_labels[@]} > 0 )) && compadd -- "${app_labels[@]}"
+      return 0
+      ;;
+    sqlmigrate)
+      if (( current_position == 1 )); then
+        app_labels=(${(f)"$(_dj_get_app_labels "$manage" "$project_root")"})
+        (( ${#app_labels[@]} > 0 )) && compadd -- "${app_labels[@]}"
+        return 0
+      fi
+
+      if (( current_position == 2 )); then
+        app_label="${positional[1]}"
+        migrations=(${(f)"$(_dj_get_migrations_for_app "$manage" "$project_root" "$app_label")"})
+        (( ${#migrations[@]} > 0 )) && compadd -- "${migrations[@]}"
+        return 0
+      fi
+      ;;
+    loaddata)
+      _files -g '*.(json|jsonl|yaml|yml|xml)'
+      return 0
+      ;;
+    runserver)
+      if (( current_position == 1 )); then
+        compadd -- 127.0.0.1:8000 0.0.0.0:8000 "[::]:8000"
+      fi
+      return 0
+      ;;
+    startapp|startproject)
+      if (( current_position == 2 )); then
+        _directories
+        return 0
+      fi
+      ;;
+  esac
+
+  return 1
+}
+
 function _django {
-  local manage project_root command
+  emulate -L zsh
+
+  local manage project_root command current_word previous_word
   local -a commands options
 
-  if manage=$(_dj_findmanage); then
+  if (( ${+functions[_dj_findmanage]} )); then
+    manage=$(_dj_findmanage 2>/dev/null)
+  else
+    manage=$(_dj_locate_manage 2>/dev/null)
+  fi
+
+  if [[ -n "$manage" ]]; then
     project_root="${manage%/manage.py}"
   fi
 
-  if (( CURRENT == 2 )); then
-    commands=("${(@f)$(_dj_get_commands "$manage" "$project_root")}")
-    compadd -- "${commands[@]}"
+  if (( CURRENT <= 2 )); then
+    commands=(${(f)"$(_dj_get_commands "$manage" "$project_root")"})
+    (( ${#commands[@]} > 0 )) && compadd -- "${commands[@]}"
     return
   fi
 
   command="${words[2]}"
   [[ -z "$command" ]] && return
 
-  options=("${(@f)$(_dj_get_command_options "$manage" "$project_root" "$command")}")
+  current_word="${words[CURRENT]}"
+  previous_word="${words[CURRENT-1]}"
+
+  if _dj_option_takes_value "$previous_word"; then
+    _dj_complete_option_value "$manage" "$project_root" "$command" "$previous_word" && return
+  fi
+
+  if [[ "$current_word" == -* ]]; then
+    options=(${(f)"$(_dj_get_command_options "$manage" "$project_root" "$command")"})
+    (( ${#options[@]} > 0 )) && compadd -- "${options[@]}"
+    return
+  fi
+
+  _dj_complete_positional "$manage" "$project_root" "$command" && return
+
+  options=(${(f)"$(_dj_get_command_options "$manage" "$project_root" "$command")"})
   (( ${#options[@]} > 0 )) && compadd -- "${options[@]}"
 }

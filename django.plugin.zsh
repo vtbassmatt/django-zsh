@@ -47,3 +47,24 @@ _dj_findmanage() {
 
   return 1
 }
+
+_dj_register_completion() {
+  local plugin_dir
+  plugin_dir="${0:A:h}"
+
+  if (( ${fpath[(Ie)${plugin_dir}]} == 0 )); then
+    fpath=("${plugin_dir}" $fpath)
+  fi
+
+  if (( ${+functions[_django]} )); then
+    unfunction _django
+  fi
+
+  autoload -Uz _django
+
+  if (( ${+functions[compdef]} )); then
+    compdef _django django
+  fi
+}
+
+_dj_register_completion
