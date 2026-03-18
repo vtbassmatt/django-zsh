@@ -10,6 +10,18 @@ _dj_completion_python() {
   fi
 }
 
+_dj_file_mtime() {
+  local file="$1" mtime
+  if mtime=$(stat -f%m "$file" 2>/dev/null); then
+    printf '%s' "$mtime"
+    return 0
+  elif mtime=$(stat -c%Y "$file" 2>/dev/null); then
+    printf '%s' "$mtime"
+    return 0
+  fi
+  return 1
+}
+
 _dj_builtin_commands() {
   print -l \
     check \
@@ -43,6 +55,57 @@ _dj_builtin_commands() {
     testserver
 }
 
+_dj_builtin_command_options() {
+  local command="$1"
+  local -a options
+
+  options=(
+    --settings
+    --pythonpath
+    --traceback
+    --verbosity
+    --no-color
+    --force-color
+    --skip-checks
+  )
+
+  case "$command" in
+    runserver)
+      options+=(--ipv6 --nothreading --noreload --nostatic --insecure)
+      ;;
+    migrate)
+      options+=(--database --fake --fake-initial --plan --run-syncdb --check --prune)
+      ;;
+    makemigrations)
+      options+=(--dry-run --merge --empty --name --no-header --check --scriptable --update)
+      ;;
+    test)
+      options+=(
+        --failfast --testrunner --top-level-directory --pattern --keepdb
+        --shuffle --reverse --debug-mode --debug-sql --parallel --tag
+        --exclude-tag --pdb --buffer --timing -k
+      )
+      ;;
+    collectstatic)
+      options+=(--noinput --clear --link --dry-run --ignore --no-default-ignore --no-post-process)
+      ;;
+    shell)
+      options+=(--interface --command -c)
+      ;;
+    loaddata)
+      options+=(--database --app --ignorenonexistent --exclude --format)
+      ;;
+    dumpdata)
+      options+=(--format --indent --database --exclude --natural-foreign --natural-primary --pks --output --all)
+      ;;
+    startapp|startproject)
+      options+=(--template --extension --name)
+      ;;
+  esac
+
+  print -l -- "${options[@]}"
+}
+
 _dj_discover_commands() {
   local manage="$1" line output
   local -aU discovered
@@ -66,38 +129,63 @@ _dj_discover_commands() {
   print -l -- "${discovered[@]}"
 }
 
-function _django {
-  local manage cache_file now mtime cache_ttl
-  local project_root
+_dj_discover_command_options() {
+  local manage="$1" command="$2" line token output body
+  local -aU discovered
+
+  output="$(_dj_completion_python "$manage" help "$command" 2>/dev/null)" || return 1
+
+  for line in "${(@f)output}"; do
+    for token in ${(z)line}; do
+      token="${token#,}"
+      token="${token%,}"
+      token="${token#[}"
+      token="${token%]}"
+      token="${token#(}"
+      token="${token%)}"
+      token="${token%%=*}"
+      token="${token%%,*}"
+
+      [[ -z "$token" || "$token" == "-" || "$token" == "--" ]] && continue
+
+      if [[ "$token" == --* ]]; then
+        body="${token#--}"
+        [[ -z "$body" || "$body" == *[^[:alnum:]_-]* ]] && continue
+        discovered+=("--$body")
+      elif [[ "$token" == -? ]]; then
+        body="${token#-}"
+        [[ "$body" == [[:alnum:]] ]] || continue
+        discovered+=("-$body")
+      fi
+    done
+  done
+
+  (( ${#discovered[@]} > 0 )) || return 1
+  print -l -- "${discovered[@]}"
+}
+
+_dj_get_commands() {
+  local manage="$1" project_root="$2"
+  local cache_file now mtime cache_ttl
   local -a commands fresh_commands
 
   cache_ttl=600
+  cache_file="/tmp/django_completion_${project_root//\//_}"
 
-  if manage=$(_dj_findmanage); then
-    project_root="${manage%/manage.py}"
-    cache_file="/tmp/django_completion_${project_root//\//_}"
-
-    if [[ -f "$cache_file" ]]; then
-      if mtime=$(stat -f%m "$cache_file" 2>/dev/null); then
-        :
-      elif mtime=$(stat -c%Y "$cache_file" 2>/dev/null); then
-        :
-      else
-        mtime=0
-      fi
-
+  if [[ -n "$manage" && -f "$cache_file" ]]; then
+    if mtime=$(_dj_file_mtime "$cache_file"); then
       now=$(date +%s)
       if (( now - mtime < cache_ttl )); then
         commands=("${(@f)$(<"$cache_file")}")
       fi
     fi
+  fi
 
-    if (( ${#commands[@]} == 0 )); then
-      fresh_commands=("${(@f)$(_dj_discover_commands "$manage")}")
-      if (( ${#fresh_commands[@]} > 0 )); then
-        commands=("${fresh_commands[@]}")
-        print -l -- "${commands[@]}" >| "$cache_file"
-      fi
+  if [[ -n "$manage" && ${#commands[@]} -eq 0 ]]; then
+    fresh_commands=("${(@f)$(_dj_discover_commands "$manage")}")
+    if (( ${#fresh_commands[@]} > 0 )); then
+      commands=("${fresh_commands[@]}")
+      print -l -- "${commands[@]}" >| "$cache_file"
     fi
   fi
 
@@ -105,5 +193,64 @@ function _django {
     commands=("${(@f)$(_dj_builtin_commands)}")
   fi
 
-  compadd -- "${commands[@]}"
+  print -l -- "${commands[@]}"
+}
+
+_dj_get_command_options() {
+  local manage="$1" project_root="$2" command="$3"
+  local cache_file now mtime cache_ttl command_key
+  local -a options fresh_options
+
+  cache_ttl=600
+
+  if [[ -n "$project_root" ]]; then
+    command_key="${command//[^A-Za-z0-9_]/_}"
+    cache_file="/tmp/django_completion_opts_${project_root//\//_}_${command_key}"
+
+    if [[ -n "$manage" && -f "$cache_file" ]]; then
+      if mtime=$(_dj_file_mtime "$cache_file"); then
+        now=$(date +%s)
+        if (( now - mtime < cache_ttl )); then
+          options=("${(@f)$(<"$cache_file")}")
+        fi
+      fi
+    fi
+  fi
+
+  if [[ -n "$manage" && ${#options[@]} -eq 0 ]]; then
+    fresh_options=("${(@f)$(_dj_discover_command_options "$manage" "$command")}")
+    if (( ${#fresh_options[@]} > 0 )); then
+      options=("${fresh_options[@]}")
+      if [[ -n "$cache_file" ]]; then
+        print -l -- "${options[@]}" >| "$cache_file"
+      fi
+    fi
+  fi
+
+  if (( ${#options[@]} == 0 )); then
+    options=("${(@f)$(_dj_builtin_command_options "$command")}")
+  fi
+
+  print -l -- "${options[@]}"
+}
+
+function _django {
+  local manage project_root command
+  local -a commands options
+
+  if manage=$(_dj_findmanage); then
+    project_root="${manage%/manage.py}"
+  fi
+
+  if (( CURRENT == 2 )); then
+    commands=("${(@f)$(_dj_get_commands "$manage" "$project_root")}")
+    compadd -- "${commands[@]}"
+    return
+  fi
+
+  command="${words[2]}"
+  [[ -z "$command" ]] && return
+
+  options=("${(@f)$(_dj_get_command_options "$manage" "$project_root" "$command")}")
+  (( ${#options[@]} > 0 )) && compadd -- "${options[@]}"
 }
