@@ -1,5 +1,14 @@
 #compdef django
 
+readonly _DJ_CACHE_TTL=600
+
+_dj_trim() {
+  local line="$1"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}" 
+  printf '%s' "$line"
+}
+
 _dj_completion_python() {
   if (( ${+commands[uv]} )); then
     uv run python "$@"
@@ -156,8 +165,7 @@ _dj_discover_commands() {
   output="$(_dj_completion_python "$manage" help --commands 2>/dev/null)" || return 1
 
   for line in "${(@f)output}"; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
+    line="$(_dj_trim "$line")"
 
     [[ -z "$line" ]] && continue
     [[ "$line" == "Available subcommands:" ]] && continue
@@ -214,8 +222,7 @@ _dj_discover_database_aliases() {
   output="$(_dj_completion_python "$manage" shell -c "from django.conf import settings; import sys; sys.stdout.write(\"\\n\".join(settings.DATABASES.keys()))" 2>/dev/null)" || return 1
 
   for line in "${(@f)output}"; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
+    line="$(_dj_trim "$line")"
     [[ -z "$line" ]] && continue
     [[ "$line" == *[^[:alnum:]_]* ]] && continue
     aliases+=("$line")
@@ -232,8 +239,7 @@ _dj_discover_app_labels() {
   output="$(_dj_completion_python "$manage" shell -c "from django.apps import apps; import sys; sys.stdout.write(\"\\n\".join(sorted(config.label for config in apps.get_app_configs())))" 2>/dev/null)" || return 1
 
   for line in "${(@f)output}"; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
+    line="$(_dj_trim "$line")"
     [[ -z "$line" ]] && continue
     [[ "$line" == *[^[:alnum:]_]* ]] && continue
     app_labels+=("$line")
@@ -252,8 +258,7 @@ _dj_discover_migrations_for_app() {
   output="$(_dj_completion_python "$manage" showmigrations "$app_label" --list 2>/dev/null)" || return 1
 
   for line in "${(@f)output}"; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    line="${line%"${line##*[![:space:]]}"}"
+    line="$(_dj_trim "$line")"
 
     [[ -z "$line" ]] && continue
     line="${line#*] }"
@@ -268,16 +273,14 @@ _dj_discover_migrations_for_app() {
 
 _dj_get_commands() {
   local manage="$1" project_root="$2"
-  local cache_file now mtime cache_ttl
+  local cache_file now mtime
   local -a commands fresh_commands
-
-  cache_ttl=600
   cache_file="/tmp/django_completion_${project_root//\//_}"
 
   if [[ -n "$manage" && -f "$cache_file" ]]; then
     if mtime=$(_dj_file_mtime "$cache_file"); then
       now=$(date +%s)
-      if (( now - mtime < cache_ttl )); then
+      if (( now - mtime < _DJ_CACHE_TTL )); then
         commands=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
       fi
     fi
@@ -300,10 +303,8 @@ _dj_get_commands() {
 
 _dj_get_command_options() {
   local manage="$1" project_root="$2" command="$3"
-  local cache_file now mtime cache_ttl command_key
+  local cache_file now mtime command_key
   local -a options fresh_options
-
-  cache_ttl=600
 
   if [[ -n "$project_root" ]]; then
     command_key="${command//[^A-Za-z0-9_]/_}"
@@ -312,7 +313,7 @@ _dj_get_command_options() {
     if [[ -n "$manage" && -f "$cache_file" ]]; then
       if mtime=$(_dj_file_mtime "$cache_file"); then
         now=$(date +%s)
-        if (( now - mtime < cache_ttl )); then
+        if (( now - mtime < _DJ_CACHE_TTL )); then
           options=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
         fi
       fi
@@ -338,10 +339,8 @@ _dj_get_command_options() {
 
 _dj_get_database_aliases() {
   local manage="$1" project_root="$2"
-  local cache_file now mtime cache_ttl
+  local cache_file now mtime
   local -a aliases fresh_aliases
-
-  cache_ttl=600
 
   if [[ -n "$project_root" ]]; then
     cache_file="/tmp/django_completion_vals_${project_root//\//_}_database_aliases"
@@ -350,7 +349,7 @@ _dj_get_database_aliases() {
   if [[ -n "$manage" && -n "$cache_file" && -f "$cache_file" ]]; then
     if mtime=$(_dj_file_mtime "$cache_file"); then
       now=$(date +%s)
-      if (( now - mtime < cache_ttl )); then
+      if (( now - mtime < _DJ_CACHE_TTL )); then
         aliases=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
       fi
     fi
@@ -375,10 +374,8 @@ _dj_get_database_aliases() {
 
 _dj_get_app_labels() {
   local manage="$1" project_root="$2"
-  local cache_file now mtime cache_ttl
+  local cache_file now mtime
   local -a app_labels fresh_app_labels
-
-  cache_ttl=600
 
   if [[ -n "$project_root" ]]; then
     cache_file="/tmp/django_completion_vals_${project_root//\//_}_app_labels"
@@ -387,7 +384,7 @@ _dj_get_app_labels() {
   if [[ -n "$manage" && -n "$cache_file" && -f "$cache_file" ]]; then
     if mtime=$(_dj_file_mtime "$cache_file"); then
       now=$(date +%s)
-      if (( now - mtime < cache_ttl )); then
+      if (( now - mtime < _DJ_CACHE_TTL )); then
         app_labels=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
       fi
     fi
@@ -408,10 +405,8 @@ _dj_get_app_labels() {
 
 _dj_get_migrations_for_app() {
   local manage="$1" project_root="$2" app_label="$3"
-  local cache_file now mtime cache_ttl app_key
+  local cache_file now mtime app_key
   local -a migrations fresh_migrations
-
-  cache_ttl=600
 
   if [[ -n "$project_root" && -n "$app_label" ]]; then
     app_key="${app_label//[^A-Za-z0-9_]/_}"
@@ -421,7 +416,7 @@ _dj_get_migrations_for_app() {
   if [[ -n "$manage" && -n "$cache_file" && -f "$cache_file" ]]; then
     if mtime=$(_dj_file_mtime "$cache_file"); then
       now=$(date +%s)
-      if (( now - mtime < cache_ttl )); then
+      if (( now - mtime < _DJ_CACHE_TTL )); then
         migrations=(${(f)"$(_dj_read_cache_lines "$cache_file")"})
       fi
     fi
@@ -601,6 +596,4 @@ function _django {
 
   _dj_complete_positional "$manage" "$project_root" "$command" && return
 
-  options=(${(f)"$(_dj_get_command_options "$manage" "$project_root" "$command")"})
-  (( ${#options[@]} > 0 )) && compadd -- "${options[@]}"
 }
