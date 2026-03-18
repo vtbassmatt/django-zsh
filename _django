@@ -1,0 +1,24 @@
+#compdef _django django
+
+function _django {
+  local manage cache_file now
+  local -a commands
+  
+  manage=$(_dj_findmanage) || return 1
+  
+  # Use project path as cache key
+  local project_root="${manage%/manage.py}"
+  cache_file="/tmp/django_completion_${project_root//\//_}"
+  
+  # Check if cache exists and is fresh (10 min)
+  now=$(date +%s)
+  if [[ -f "$cache_file" ]] && (( now - $(stat -f%m "$cache_file") < 600 )); then
+    commands=( $(<"$cache_file") )
+  else
+    # Refresh cache
+    commands=( $(uv run python "$manage" help --commands 2>/dev/null) )
+    print -l $commands > "$cache_file"
+  fi
+  
+  compadd -- $commands
+}
